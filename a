@@ -53,7 +53,7 @@
 </head>
 <body>
   <div class="login-box">
-    <img src="apec(1)" alt="Adhiparasakthi Engineering College Logo" />
+    <img src="apec (1).png" alt="Adhiparasakthi Engineering College Logo" />
     <h2>Login</h2>
     <form action="#" method="post">
       <input type="text" name="username" placeholder="Username" required />
