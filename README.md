@@ -1,21 +1,105 @@
-Redesign the Notifications page only. Do not modify any backend API, controllers, services, database, or business logic.
+Fix the Notification GET API only.
+
+Do not change the frontend.
+
+Do not change the Notification table schema.
+
+The Notification table should remain lightweight and continue storing only notification-related fields such as NotificationId, Title, Message, CheckOutId, RecipientRole, Status and Timestamp.
+
+When GET /api/Notification is called:
+
+1. Load notifications.
+
+2. If CheckOutId is not null:
+   - Join with CheckOuts.
+   - Join CheckOuts with Employees.
+   - Join CheckOuts with WipInventory.
+   - Join WipInventory with Products.
+   - Join Rack and Warehouse.
+
+3. Return a NotificationResponseDto containing:
+
+- NotificationId
+- NotificationType
+- Title
+- Message
+- CheckOutId
+- EmployeeId
+- EmployeeName
+- ProductId
+- ProductCode
+- ProductName
+- Quantity
+- WarehouseName
+- RackCode
+- Status
+- RecipientRole
+- Timestamp
+- IsRead
+
+4. If a notification is not related to a checkout (CheckOutId is null), return the available notification fields and use null only for the checkout-related properties.
+
+5. Update AutoMapper or manual mapping so these fields are populated correctly.
+
+6. Ensure GET /api/Notification never returns empty EmployeeName, ProductName or Quantity for checkout notifications when the related data exists in the database.
+
+7. Do not modify Approve/Reject logic, Checkout logic or database schema. Only improve the GET Notification API response by loading related data through Entity Framework Include/ThenInclude or LINQ joins.
+
+Update only the React frontend Notification page.
+
+Do not modify any backend code or API endpoints.
+
+The backend now returns the following fields:
+
+- notificationId
+- notificationType
+- title
+- message
+- checkOutId
+- employeeId
+- employeeName
+- productId
+- productCode
+- productName
+- quantity
+- warehouseName
+- rackCode
+- status
+- recipientRole
+- timestamp
+- isRead
 
 Requirements:
 
-1. Replace the current notification cards with a professional table layout.
+1. Display the notification list in a modern responsive table.
 
 Columns:
-- Notification Type
+- Type
 - Employee
 - Product
 - Quantity
+- Warehouse
+- Rack
 - Status
 - Date & Time
 - Action
 
-2. Only checkout requests with Status = Pending should show a "View" button.
+2. Map the backend response correctly:
+- Employee → employeeName
+- Product → productName
+- Quantity → quantity
+- Warehouse → warehouseName
+- Rack → rackCode
+- Status → status
+- Date → timestamp
 
-3. Clicking the "View" button should open a right-side drawer (or modal) displaying:
+3. Do not show "N/A" if the backend sends a valid value.
+
+4. Only show a "View" button when:
+- notificationType is "Checkout Request"
+- status is "Pending"
+
+5. Clicking "View" opens a right-side drawer (or modal) showing:
 
 - Employee Name
 - Employee ID
@@ -24,41 +108,31 @@ Columns:
 - Warehouse
 - Rack
 - Requested Quantity
-- Available Quantity
-- Request Time
-- Current Status
+- Status
+- Date & Time
 
-At the bottom show:
-- Approve button (green)
-- Reject button (red)
+6. Inside the drawer show:
+- Green Approve button
+- Red Reject button
 
-4. After Approve or Reject:
-- Show a success toast.
+7. After Approve or Reject:
+- Show success toast.
 - Close the drawer.
-- Remove the approved/rejected request from the Pending list without refreshing the page.
-- Reload the notifications automatically.
+- Remove the processed request from the Pending list.
+- Refresh the notification list automatically.
 
-5. Fix all empty values.
-Do not display blank Employee, Product, Quantity, Warehouse, Rack or Status.
-Map the API response correctly.
-If any value is missing, display "N/A" instead of leaving it blank.
+8. Show colored badges:
+- Pending → Orange
+- Approved → Green
+- Rejected → Red
+- CheckIn → Blue
+- Unread → Gray
 
-6. Improve the UI:
-- Modern enterprise design.
-- Sticky table header.
-- Hover effect on rows.
-- Status badges (Pending, Approved, Rejected, CheckIn).
-- Bell icon for notification type.
-- Responsive layout.
-- Pagination if notifications exceed 10.
-- Search should filter the table.
+9. Add:
+- Search
+- Pagination
+- Loading spinner
+- "No notifications found" message when empty.
 
-7. Do not show Approve/Reject buttons directly in the table.
-They should appear only inside the drawer after clicking View.
-
-8. Keep all existing API endpoints exactly the same.
-Only change the React frontend.
-
-9. Ensure the frontend correctly maps the backend response fields so Employee, Product, Quantity, Warehouse, Rack, Status and Time are displayed instead of empty values.
-
-10. Do not change any backend code or API contract.
+10. Keep the existing API URLs unchanged.
+Only update the UI and data binding.
