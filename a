@@ -1,65 +1,284 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Adhiparasakthi Engineering College - Login</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f4f6f9;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
+using Microsoft.EntityFrameworkCore;
+using wipmanagement.api.DTOs;
+using wipmanagement.api.Interfaces.Services;
+using wipmanagement.api.Models;
+using wipmanagement.api.Data;
+
+namespace wipmanagement.api.Services
+{
+    public class InventoryService : IInventoryService
+    {
+        private readonly ApplicationDbContext _context;
+        private readonly INotificationService _notificationService;
+        private readonly Microsoft.Extensions.Logging.ILogger<InventoryService> _logger;
+
+        public InventoryService(ApplicationDbContext context, INotificationService notificationService, Microsoft.Extensions.Logging.ILogger<InventoryService> logger)
+        {
+            _context = context;
+            _notificationService = notificationService;
+            _logger = logger;
+        }
+
+        // Backwards-compatible constructor for tests and callers that don't provide ILogger
+        public InventoryService(ApplicationDbContext context, INotificationService notificationService)
+            : this(context, notificationService, Microsoft.Extensions.Logging.Abstractions.NullLogger<InventoryService>.Instance)
+        {
+        }
+
+        public async Task<WipInventoryDto> CheckInAsync(int productId, int rackId, int quantity, int employeeId)
+        {
+            if (quantity <= 0) throw new ArgumentException("Quantity must be positive", nameof(quantity));
+
+            var wip = await _context.WipInventories.FirstOrDefaultAsync(w => w.ProductId == productId && w.RackId == rackId);
+            if (wip == null)
+            {
+                wip = new WipInventory { ProductId = productId, RackId = rackId, Quantity = quantity, LastUpdated = DateTime.UtcNow };
+                _context.WipInventories.Add(wip);
+            }
+            else
+            {
+                wip.Quantity += quantity;
+                wip.LastUpdated = DateTime.UtcNow;
+                _context.WipInventories.Update(wip);
+            }
+
+            var rack = await _context.Racks.FindAsync(rackId);
+            if (rack == null) throw new InvalidOperationException("Rack not found");
+            var available = rack.Capacity - rack.Occupied;
+            if (quantity > available)
+            {
+                throw new InvalidOperationException($"Rack {rack.RackCode} has only {available} space available.");
+            }
+            rack.Occupied += quantity;
+            _context.Racks.Update(rack);
+
+            var checkin = new CheckIn { WipInventory = wip, Quantity = quantity, Timestamp = DateTime.UtcNow, EmployeeId = employeeId };
+            _context.CheckIns.Add(checkin);
+
+            var audit = new AuditHistory { Action = "CheckIn", Timestamp = DateTime.UtcNow, EmployeeId = employeeId, Details = $"Checked in {quantity} for product {productId} to rack {rackId}" };
+            _context.AuditHistories.Add(audit);
+
+            await _context.SaveChangesAsync();
+            _logger.LogDebug("WipInventory saved: {WipInventoryId}", wip.WipInventoryId);
+
+            // Create notification for Admin (best-effort, do not fail main operation)
+            try
+            {
+                var product = await _context.Products.FindAsync(productId);
+                var rackInfo = await _context.Racks.FindAsync(rackId);
+                var employee = await _context.Employees.FindAsync(employeeId);
+
+                var title = "CheckIn";
+                var message = $"Employee {employee?.EmployeeCode} checked in {quantity} for Product {product?.ProductCode} to Rack {rackInfo?.RackCode}.";
+
+                var notifDto = new DTOs.NotificationCreateDto { EmployeeId = null, Title = title, Message = message };
+                await _notificationService.CreateAsync(notifDto);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to create check-in notification (non-fatal)");
+            }
+
+            return new WipInventoryDto { WipInventoryId = wip.WipInventoryId, ProductId = wip.ProductId, RackId = wip.RackId, Quantity = wip.Quantity, LastUpdated = wip.LastUpdated };
+        }
+
+        public async Task<WipInventoryDto> CheckOutAsync(int wipInventoryId, int quantity, int employeeId)
+        {
+            if (quantity <= 0) throw new ArgumentException("Quantity must be positive", nameof(quantity));
+            // Do not modify inventory here. Create a pending checkout request and notify admins.
+            var wip = await _context.WipInventories.FindAsync(wipInventoryId);
+            if (wip == null) throw new InvalidOperationException("Inventory not found");
+
+            // Reject if requested quantity exceeds current inventory
+            if (quantity > wip.Quantity) throw new ArgumentException("Requested quantity exceeds current inventory", nameof(quantity));
+
+            var checkout = new CheckOut { WipInventoryId = wipInventoryId, Quantity = quantity, Timestamp = DateTime.UtcNow, EmployeeId = employeeId, Status = "Pending" };
+            _context.CheckOuts.Add(checkout);
+
+            var audit = new AuditHistory { Action = "CheckOutRequested", Timestamp = DateTime.UtcNow, EmployeeId = employeeId, Details = $"Requested checkout of {quantity} from inventory {wipInventoryId}" };
+            _context.AuditHistories.Add(audit);
+
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Checkout Requested - InventoryId: {WipInventoryId}, Quantity: {Quantity}, EmployeeId: {EmployeeId}", wipInventoryId, quantity, employeeId);
+
+            // Create notification for admins (no specific employee assigned)
+            var employee = await _context.Employees.FindAsync(employeeId);
+            var product = await _context.Products.FindAsync(wip.ProductId);
+            var title = "New Checkout Request";
+            var message = $"EmployeeId: {employee?.EmployeeId}\nEmployee: {employee?.Name ?? "Unknown"}\nProductCode: {product?.ProductCode ?? "Unknown"}\nProduct: {product?.Name ?? "Unknown"}\nQuantity: {quantity}\nDate: {DateTime.UtcNow:u}\nStatus: Pending";
+            var notifDto = new DTOs.NotificationCreateDto { EmployeeId = null, Title = title, Message = message };
+            // Use notification service to persist notification
+            await _notificationService.CreateAsync(notifDto);
+
+            return new WipInventoryDto { WipInventoryId = wip.WipInventoryId, ProductId = wip.ProductId, RackId = wip.RackId, Quantity = wip.Quantity, LastUpdated = wip.LastUpdated };
+        }
+
+        public async Task<bool> ApproveCheckOutAsync(int checkOutId, int adminEmployeeId)
+        {
+            // Transactional approval: reduce inventory, update checkout status, audit, notify employee
+            Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? tx = null;
+            try
+            {
+                tx = await _context.Database.BeginTransactionAsync();
+            }
+            catch (InvalidOperationException)
+            {
+                // In-memory provider or others may not support transactions in tests; proceed without explicit transaction.
+                tx = null;
+            }
+
+            var checkout = await _context.CheckOuts.FindAsync(checkOutId);
+            if (checkout == null) return false;
+            if (!string.Equals(checkout.Status, "Pending", StringComparison.OrdinalIgnoreCase)) return false;
+
+            var wip = await _context.WipInventories.FindAsync(checkout.WipInventoryId);
+            if (wip == null) return false;
+
+            if (wip.Quantity < checkout.Quantity) return false; // cannot approve
+
+            wip.Quantity -= checkout.Quantity;
+            wip.LastUpdated = DateTime.UtcNow;
+            _context.WipInventories.Update(wip);
+
+            var rack = await _context.Racks.FindAsync(wip.RackId);
+            if (rack == null) return false;
+            rack.Occupied -= checkout.Quantity;
+            if (rack.Occupied < 0) rack.Occupied = 0;
+            _context.Racks.Update(rack);
+
+            checkout.Status = "Approved";
+            _context.CheckOuts.Update(checkout);
+
+            var audit = new AuditHistory { Action = "CheckOutApproved", Timestamp = DateTime.UtcNow, EmployeeId = adminEmployeeId, Details = $"Approved checkout {checkout.CheckOutId} for inventory {checkout.WipInventoryId}, qty {checkout.Quantity}" };
+            _context.AuditHistories.Add(audit);
+
+            await _context.SaveChangesAsync();
+            if (tx != null)
+            {
+                await tx.CommitAsync();
+                await tx.DisposeAsync();
+            }
+
+            _logger.LogInformation("Checkout Approved - CheckOutId: {CheckOutId}, InventoryId: {WipInventoryId}, Quantity: {Quantity}, AdminEmployeeId: {AdminId}", checkout.CheckOutId, checkout.WipInventoryId, checkout.Quantity, adminEmployeeId);
+
+            // Notify employee
+            var employee = await _context.Employees.FindAsync(checkout.EmployeeId);
+            var product = await _context.Products.FindAsync(wip.ProductId);
+            var title = "Check-Out Request Approved";
+            var message = "Your checkout request has been Approved.";
+            var notifDto = new DTOs.NotificationCreateDto { EmployeeId = checkout.EmployeeId, Title = title, Message = message };
+            await _notificationService.CreateAsync(notifDto);
+
+            return true;
+        }
+
+        public async Task<bool> RejectCheckOutAsync(int checkOutId, int adminEmployeeId)
+        {
+            var checkout = await _context.CheckOuts.FindAsync(checkOutId);
+            if (checkout == null) return false;
+            if (!string.Equals(checkout.Status, "Pending", StringComparison.OrdinalIgnoreCase)) return false;
+
+            checkout.Status = "Rejected";
+            _context.CheckOuts.Update(checkout);
+
+            var audit = new AuditHistory { Action = "CheckOutRejected", Timestamp = DateTime.UtcNow, EmployeeId = adminEmployeeId, Details = $"Rejected checkout {checkout.CheckOutId} for inventory {checkout.WipInventoryId}, qty {checkout.Quantity}" };
+            _context.AuditHistories.Add(audit);
+
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Checkout Rejected - CheckOutId: {CheckOutId}, InventoryId: {WipInventoryId}, Quantity: {Quantity}, AdminEmployeeId: {AdminId}", checkout.CheckOutId, checkout.WipInventoryId, checkout.Quantity, adminEmployeeId);
+
+            // Notify employee (concise)
+            var employee = await _context.Employees.FindAsync(checkout.EmployeeId);
+            var wip = await _context.WipInventories.FindAsync(checkout.WipInventoryId);
+            var product = wip == null ? null : await _context.Products.FindAsync(wip.ProductId);
+            var title = "Check-Out Request Rejected";
+            var message = "Your checkout request has been Rejected.";
+            var notifDto = new DTOs.NotificationCreateDto { EmployeeId = checkout.EmployeeId, Title = title, Message = message };
+            await _notificationService.CreateAsync(notifDto);
+
+            return true;
+        }
+
+        public async Task<IEnumerable<WipInventoryDto>> GetAllAsync()
+        {
+            var list = await _context.WipInventories.Where(w => !w.IsDeleted).ToListAsync();
+            return list.Select(w => new WipInventoryDto { WipInventoryId = w.WipInventoryId, ProductId = w.ProductId, RackId = w.RackId, Quantity = w.Quantity, LastUpdated = w.LastUpdated });
+        }
+
+        public async Task<WipInventoryDto> CreateInventoryAsync(int productId, int rackId, int quantity)
+        {
+            if (quantity < 0) throw new ArgumentException("Quantity cannot be negative", nameof(quantity));
+
+            var product = await _context.Products.FindAsync(productId);
+            if (product == null || product.IsDeleted) throw new InvalidOperationException("Product not found");
+
+            var rack = await _context.Racks.FindAsync(rackId);
+            if (rack == null || rack.IsDeleted) throw new InvalidOperationException("Rack not found");
+
+            var wip = new WipInventory { ProductId = productId, RackId = rackId, Quantity = quantity, LastUpdated = DateTime.UtcNow };
+            _context.WipInventories.Add(wip);
+            var available = rack.Capacity - rack.Occupied;
+            if (quantity > available)
+            {
+                throw new InvalidOperationException($"Rack {rack.RackCode} has only {available} space available.");
+            }
+            rack.Occupied += quantity;
+            _context.Racks.Update(rack);
+
+            await _context.SaveChangesAsync();
+
+            return new WipInventoryDto { WipInventoryId = wip.WipInventoryId, ProductId = wip.ProductId, RackId = wip.RackId, Quantity = wip.Quantity, LastUpdated = wip.LastUpdated };
+        }
+
+        public async Task<WipInventoryDto?> GetByIdAsync(int id)
+        {
+            var w = await _context.WipInventories.FindAsync(id);
+            if (w == null || w.IsDeleted) return null;
+            return new WipInventoryDto { WipInventoryId = w.WipInventoryId, ProductId = w.ProductId, RackId = w.RackId, Quantity = w.Quantity, LastUpdated = w.LastUpdated };
+        }
+
+        public async Task<WipInventoryDto> UpdateInventoryAsync(int id, int quantity)
+        {
+            if (quantity < 0) throw new ArgumentException("Quantity cannot be negative", nameof(quantity));
+            var w = await _context.WipInventories.FindAsync(id);
+            if (w == null || w.IsDeleted) throw new InvalidOperationException("Inventory not found");
+
+            // adjust rack occupancy based on difference
+            var rack = await _context.Racks.FindAsync(w.RackId);
+            if (rack == null || rack.IsDeleted) throw new InvalidOperationException("Rack not found");
+
+            var diff = quantity - w.Quantity;
+            if (rack.Occupied + diff < 0)
+            {
+                throw new InvalidOperationException($"Rack {rack.RackCode} occupied quantity become negetive.");
+            }
+                if (rack.Occupied + diff > rack.Capacity)
+            {
+                throw new InvalidOperationException($"Rack {rack.RackCode} capacity exceeded.");
+            }
+            w.Quantity = quantity;
+            w.LastUpdated = DateTime.UtcNow;
+            _context.WipInventories.Update(w);
+
+            rack.Occupied += diff;
+            if (rack.Occupied < 0) rack.Occupied = 0;
+            _context.Racks.Update(rack);
+
+            await _context.SaveChangesAsync();
+
+            return new WipInventoryDto { WipInventoryId = w.WipInventoryId, ProductId = w.ProductId, RackId = w.RackId, Quantity = w.Quantity, LastUpdated = w.LastUpdated };
+        }
+
+        public async Task<bool> SoftDeleteInventoryAsync(int id)
+        {
+            var w = await _context.WipInventories.FindAsync(id);
+            if (w == null) return false;
+            w.IsDeleted = true;
+            _context.WipInventories.Update(w);
+            await _context.SaveChangesAsync();
+            return true;
+        }
     }
-    .login-box {
-      background: white;
-      padding: 40px;
-      border-radius: 10px;
-      box-shadow: 0 0 15px rgba(0,0,0,0.1);
-      width: 320px;
-      text-align: center;
-    }
-    .login-box img {
-      width: 100px;
-      margin-bottom: 20px;
-    }
-    .login-box h2 {
-      margin-bottom: 20px;
-      color: #333;
-    }
-    .login-box input[type="text"],
-    .login-box input[type="password"] {
-      width: 100%;
-      padding: 10px;
-      margin: 10px 0;
-      border: 1px solid #ccc;
-      border-radius: 5px;
-    }
-    .login-box input[type="submit"] {
-      width: 100%;
-      padding: 10px;
-      background-color: #007bff;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-    }
-    .login-box input[type="submit"]:hover {
-      background-color: #0056b3;
-    }
-  </style>
-</head>
-<body>
-  <div class="login-box">
-    <img src="apec (1).png" alt="Adhiparasakthi Engineering College Logo" />
-    <h2>Login</h2>
-    <form action="#" method="post">
-      <input type="text" name="username" placeholder="a" required />
-      <input type="password" name="password" placeholder="Password" required />
-      <input type="submit" value="Login" />
-    </form>
-  </div>
-</body>
-</html>
+}
