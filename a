@@ -1,284 +1,231 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using wipmanagement.api.DTOs;
+using wipmanagement.api.Data;
 using wipmanagement.api.Interfaces.Services;
 using wipmanagement.api.Models;
-using wipmanagement.api.Data;
 
 namespace wipmanagement.api.Services
 {
-    public class InventoryService : IInventoryService
+    public class NotificationService : INotificationService
     {
         private readonly ApplicationDbContext _context;
-        private readonly INotificationService _notificationService;
-        private readonly Microsoft.Extensions.Logging.ILogger<InventoryService> _logger;
 
-        public InventoryService(ApplicationDbContext context, INotificationService notificationService, Microsoft.Extensions.Logging.ILogger<InventoryService> logger)
+        public NotificationService(ApplicationDbContext context)
         {
             _context = context;
-            _notificationService = notificationService;
-            _logger = logger;
         }
 
-        // Backwards-compatible constructor for tests and callers that don't provide ILogger
-        public InventoryService(ApplicationDbContext context, INotificationService notificationService)
-            : this(context, notificationService, Microsoft.Extensions.Logging.Abstractions.NullLogger<InventoryService>.Instance)
+        public NotificationService(Repositories.NotificationRepository repo)
         {
+            _context = repo.Context;
         }
 
-        public async Task<WipInventoryDto> CheckInAsync(int productId, int rackId, int quantity, int employeeId)
+        public async Task CreateNotificationAsync(Notification notification)
         {
-            if (quantity <= 0) throw new ArgumentException("Quantity must be positive", nameof(quantity));
+            _context.Notifications.Add(notification);
+            await _context.SaveChangesAsync();
+        }
 
-            var wip = await _context.WipInventories.FirstOrDefaultAsync(w => w.ProductId == productId && w.RackId == rackId);
-            if (wip == null)
+        public async Task<NotificationResponseDto> CreateAsync(NotificationCreateDto dto)
+        {
+            var n = new Notification
             {
-                wip = new WipInventory { ProductId = productId, RackId = rackId, Quantity = quantity, LastUpdated = DateTime.UtcNow };
-                _context.WipInventories.Add(wip);
+                EmployeeId = dto.EmployeeId,
+                Title = dto.Title,
+                Message = dto.Message,
+                Timestamp = DateTime.UtcNow,
+                IsRead = false,
+                IsDeleted = false
+            };
+
+            if (dto.CheckOutId.HasValue)
+            {
+                n.CheckOutId = dto.CheckOutId.Value;
+            }
+
+            if (dto.EmployeeId.HasValue)
+            {
+                n.RecipientEmployeeId = dto.EmployeeId.Value;
+                n.RecipientRole = "Employee";
             }
             else
             {
-                wip.Quantity += quantity;
-                wip.LastUpdated = DateTime.UtcNow;
-                _context.WipInventories.Update(wip);
+                n.RecipientRole = "Admin";
             }
 
-            var rack = await _context.Racks.FindAsync(rackId);
-            if (rack == null) throw new InvalidOperationException("Rack not found");
-            var available = rack.Capacity - rack.Occupied;
-            if (quantity > available)
-            {
-                throw new InvalidOperationException($"Rack {rack.RackCode} has only {available} space available.");
-            }
-            rack.Occupied += quantity;
-            _context.Racks.Update(rack);
-
-            var checkin = new CheckIn { WipInventory = wip, Quantity = quantity, Timestamp = DateTime.UtcNow, EmployeeId = employeeId };
-            _context.CheckIns.Add(checkin);
-
-            var audit = new AuditHistory { Action = "CheckIn", Timestamp = DateTime.UtcNow, EmployeeId = employeeId, Details = $"Checked in {quantity} for product {productId} to rack {rackId}" };
-            _context.AuditHistories.Add(audit);
-
+            _context.Notifications.Add(n);
             await _context.SaveChangesAsync();
-            _logger.LogDebug("WipInventory saved: {WipInventoryId}", wip.WipInventoryId);
 
-            // Create notification for Admin (best-effort, do not fail main operation)
+            return new NotificationResponseDto
+            {
+                NotificationId = n.NotificationId,
+                EmployeeId = n.RecipientEmployeeId,
+                Title = n.Title,
+                Message = n.Message,
+                CheckOutId = n.CheckOutId,
+                IsRead = n.IsRead,
+                Timestamp = n.Timestamp
+            };
+        }
+
+        public async Task<IEnumerable<NotificationResponseDto>> GetAllForEmployeeAsync(int employeeId)
+        {
+            var list = await _context.Notifications
+                .Where(n => n.RecipientEmployeeId == employeeId && !n.IsDeleted)
+                .OrderByDescending(n => n.Timestamp)
+                .ToListAsync();
+
+            var enriched = new List<NotificationResponseDto>();
+            foreach (var n in list)
+            {
+                var msg = await EnrichMessageAsync(n);
+                enriched.Add(new NotificationResponseDto
+                {
+                    NotificationId = n.NotificationId,
+                    EmployeeId = n.RecipientEmployeeId,
+                    Title = n.Title,
+                    Message = msg,
+                    IsRead = n.IsRead,
+                    Timestamp = n.Timestamp
+                });
+            }
+
+            return enriched;
+        }
+
+        public async Task<IEnumerable<NotificationResponseDto>> GetUnreadForEmployeeAsync(int employeeId)
+        {
+            var list = await _context.Notifications
+                .Where(n => n.RecipientEmployeeId == employeeId && !n.IsDeleted && n.IsRead == false)
+                .OrderByDescending(n => n.Timestamp)
+                .ToListAsync();
+
+            var enriched = new List<NotificationResponseDto>();
+            foreach (var n in list)
+            {
+                var msg = await EnrichMessageAsync(n);
+                enriched.Add(new NotificationResponseDto
+                {
+                    NotificationId = n.NotificationId,
+                    EmployeeId = n.RecipientEmployeeId,
+                    Title = n.Title,
+                    Message = msg,
+                    IsRead = n.IsRead,
+                    Timestamp = n.Timestamp
+                });
+            }
+
+            return enriched;
+        }
+
+        public async Task<IEnumerable<Notification>> GetNotificationsForRoleAsync(string role, int? employeeId = null)
+        {
+            var query = _context.Notifications.AsQueryable();
+            if (!string.IsNullOrEmpty(role)) query = query.Where(n => n.RecipientRole == role || string.IsNullOrEmpty(n.RecipientRole));
+            if (employeeId.HasValue) query = query.Where(n => n.RecipientEmployeeId == employeeId.Value || n.RecipientEmployeeId == null);
+            var list = await query.Where(n => !n.IsDeleted).OrderByDescending(n => n.Timestamp).ToListAsync();
+
+            foreach (var n in list)
+            {
+                n.Message = await EnrichMessageAsync(n);
+            }
+
+            return list;
+        }
+
+        public async Task<int> GetUnreadCountAsync(string role, int? employeeId = null)
+        {
+            var query = _context.Notifications.AsQueryable();
+            if (!string.IsNullOrEmpty(role)) query = query.Where(n => n.RecipientRole == role || string.IsNullOrEmpty(n.RecipientRole));
+            if (employeeId.HasValue) query = query.Where(n => n.RecipientEmployeeId == employeeId.Value || n.RecipientEmployeeId == null);
+            return await query.CountAsync(n => !n.IsDeleted && n.IsRead == false);
+        }
+
+        public async Task<bool> MarkAsReadAsync(int notificationId)
+        {
+            var n = await _context.Notifications.FindAsync(notificationId);
+            if (n == null) return false;
+            n.IsRead = true;
+            _context.Notifications.Update(n);
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        public async Task<bool> SoftDeleteAsync(int notificationId)
+        {
+            var n = await _context.Notifications.FindAsync(notificationId);
+            if (n == null) return false;
+            n.IsDeleted = true;
+            _context.Notifications.Update(n);
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        private async Task<string> EnrichMessageAsync(Notification n)
+        {
+            if (n == null) return string.Empty;
+
+            var msg = n.Message ?? string.Empty;
+
             try
             {
-                var product = await _context.Products.FindAsync(productId);
-                var rackInfo = await _context.Racks.FindAsync(rackId);
-                var employee = await _context.Employees.FindAsync(employeeId);
+                var empToken = ExtractToken(msg, "Employee");
+                if (!string.IsNullOrEmpty(empToken))
+                {
+                    var emp = await _context.Employees.FirstOrDefaultAsync(e => e.EmployeeCode == empToken);
+                    if (emp != null)
+                    {
+                        msg = msg.Replace($"Employee {empToken}", $"Employee {emp.Name}");
+                    }
+                }
 
-                var title = "CheckIn";
-                var message = $"Employee {employee?.EmployeeCode} checked in {quantity} for Product {product?.ProductCode} to Rack {rackInfo?.RackCode}.";
+                var prodToken = ExtractToken(msg, "Product");
+                if (!string.IsNullOrEmpty(prodToken))
+                {
+                    var prod = await _context.Products.FirstOrDefaultAsync(p => p.ProductCode == prodToken);
+                    if (prod != null)
+                    {
+                        msg = msg.Replace($"Product {prodToken}", $"Product {prod.Name}");
+                        msg = msg.Replace($"Product: {prodToken}", $"Product: {prod.Name}");
+                    }
+                }
 
-                var notifDto = new DTOs.NotificationCreateDto { EmployeeId = null, Title = title, Message = message };
-                await _notificationService.CreateAsync(notifDto);
+                if (!msg.Contains("Date:") && n.Timestamp != default)
+                {
+                    msg = msg + $"\nDate: {n.Timestamp:u}";
+                }
             }
-            catch (Exception ex)
+            catch
             {
-                _logger.LogWarning(ex, "Failed to create check-in notification (non-fatal)");
+  
             }
 
-            return new WipInventoryDto { WipInventoryId = wip.WipInventoryId, ProductId = wip.ProductId, RackId = wip.RackId, Quantity = wip.Quantity, LastUpdated = wip.LastUpdated };
+            return msg;
         }
 
-        public async Task<WipInventoryDto> CheckOutAsync(int wipInventoryId, int quantity, int employeeId)
+        private string ExtractToken(string message, string key)
         {
-            if (quantity <= 0) throw new ArgumentException("Quantity must be positive", nameof(quantity));
-            // Do not modify inventory here. Create a pending checkout request and notify admins.
-            var wip = await _context.WipInventories.FindAsync(wipInventoryId);
-            if (wip == null) throw new InvalidOperationException("Inventory not found");
-
-            // Reject if requested quantity exceeds current inventory
-            if (quantity > wip.Quantity) throw new ArgumentException("Requested quantity exceeds current inventory", nameof(quantity));
-
-            var checkout = new CheckOut { WipInventoryId = wipInventoryId, Quantity = quantity, Timestamp = DateTime.UtcNow, EmployeeId = employeeId, Status = "Pending" };
-            _context.CheckOuts.Add(checkout);
-
-            var audit = new AuditHistory { Action = "CheckOutRequested", Timestamp = DateTime.UtcNow, EmployeeId = employeeId, Details = $"Requested checkout of {quantity} from inventory {wipInventoryId}" };
-            _context.AuditHistories.Add(audit);
-
-            await _context.SaveChangesAsync();
-
-            _logger.LogInformation("Checkout Requested - InventoryId: {WipInventoryId}, Quantity: {Quantity}, EmployeeId: {EmployeeId}", wipInventoryId, quantity, employeeId);
-
-            // Create notification for admins (no specific employee assigned)
-            var employee = await _context.Employees.FindAsync(employeeId);
-            var product = await _context.Products.FindAsync(wip.ProductId);
-            var title = "New Checkout Request";
-            var message = $"EmployeeId: {employee?.EmployeeId}\nEmployee: {employee?.Name ?? "Unknown"}\nProductCode: {product?.ProductCode ?? "Unknown"}\nProduct: {product?.Name ?? "Unknown"}\nQuantity: {quantity}\nDate: {DateTime.UtcNow:u}\nStatus: Pending";
-            var notifDto = new DTOs.NotificationCreateDto { EmployeeId = null, Title = title, Message = message };
-            // Use notification service to persist notification
-            await _notificationService.CreateAsync(notifDto);
-
-            return new WipInventoryDto { WipInventoryId = wip.WipInventoryId, ProductId = wip.ProductId, RackId = wip.RackId, Quantity = wip.Quantity, LastUpdated = wip.LastUpdated };
-        }
-
-        public async Task<bool> ApproveCheckOutAsync(int checkOutId, int adminEmployeeId)
-        {
-            // Transactional approval: reduce inventory, update checkout status, audit, notify employee
-            Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? tx = null;
-            try
+            if (string.IsNullOrEmpty(message) || string.IsNullOrEmpty(key)) return string.Empty;
+            var patterns = new[] { $"{key} ", $"{key}: " };
+            foreach (var p in patterns)
             {
-                tx = await _context.Database.BeginTransactionAsync();
-            }
-            catch (InvalidOperationException)
-            {
-                // In-memory provider or others may not support transactions in tests; proceed without explicit transaction.
-                tx = null;
-            }
-
-            var checkout = await _context.CheckOuts.FindAsync(checkOutId);
-            if (checkout == null) return false;
-            if (!string.Equals(checkout.Status, "Pending", StringComparison.OrdinalIgnoreCase)) return false;
-
-            var wip = await _context.WipInventories.FindAsync(checkout.WipInventoryId);
-            if (wip == null) return false;
-
-            if (wip.Quantity < checkout.Quantity) return false; // cannot approve
-
-            wip.Quantity -= checkout.Quantity;
-            wip.LastUpdated = DateTime.UtcNow;
-            _context.WipInventories.Update(wip);
-
-            var rack = await _context.Racks.FindAsync(wip.RackId);
-            if (rack == null) return false;
-            rack.Occupied -= checkout.Quantity;
-            if (rack.Occupied < 0) rack.Occupied = 0;
-            _context.Racks.Update(rack);
-
-            checkout.Status = "Approved";
-            _context.CheckOuts.Update(checkout);
-
-            var audit = new AuditHistory { Action = "CheckOutApproved", Timestamp = DateTime.UtcNow, EmployeeId = adminEmployeeId, Details = $"Approved checkout {checkout.CheckOutId} for inventory {checkout.WipInventoryId}, qty {checkout.Quantity}" };
-            _context.AuditHistories.Add(audit);
-
-            await _context.SaveChangesAsync();
-            if (tx != null)
-            {
-                await tx.CommitAsync();
-                await tx.DisposeAsync();
+                var idx = message.IndexOf(p);
+                if (idx >= 0)
+                {
+                    var start = idx + p.Length;
+                
+                    var end = message.IndexOfAny(new[] { ' ', '\n', ',', '.' }, start);
+                    if (end < 0) end = message.Length;
+                    var token = message.Substring(start, end - start).Trim();
+                    return token;
+                }
             }
 
-            _logger.LogInformation("Checkout Approved - CheckOutId: {CheckOutId}, InventoryId: {WipInventoryId}, Quantity: {Quantity}, AdminEmployeeId: {AdminId}", checkout.CheckOutId, checkout.WipInventoryId, checkout.Quantity, adminEmployeeId);
-
-            // Notify employee
-            var employee = await _context.Employees.FindAsync(checkout.EmployeeId);
-            var product = await _context.Products.FindAsync(wip.ProductId);
-            var title = "Check-Out Request Approved";
-            var message = "Your checkout request has been Approved.";
-            var notifDto = new DTOs.NotificationCreateDto { EmployeeId = checkout.EmployeeId, Title = title, Message = message };
-            await _notificationService.CreateAsync(notifDto);
-
-            return true;
-        }
-
-        public async Task<bool> RejectCheckOutAsync(int checkOutId, int adminEmployeeId)
-        {
-            var checkout = await _context.CheckOuts.FindAsync(checkOutId);
-            if (checkout == null) return false;
-            if (!string.Equals(checkout.Status, "Pending", StringComparison.OrdinalIgnoreCase)) return false;
-
-            checkout.Status = "Rejected";
-            _context.CheckOuts.Update(checkout);
-
-            var audit = new AuditHistory { Action = "CheckOutRejected", Timestamp = DateTime.UtcNow, EmployeeId = adminEmployeeId, Details = $"Rejected checkout {checkout.CheckOutId} for inventory {checkout.WipInventoryId}, qty {checkout.Quantity}" };
-            _context.AuditHistories.Add(audit);
-
-            await _context.SaveChangesAsync();
-
-            _logger.LogInformation("Checkout Rejected - CheckOutId: {CheckOutId}, InventoryId: {WipInventoryId}, Quantity: {Quantity}, AdminEmployeeId: {AdminId}", checkout.CheckOutId, checkout.WipInventoryId, checkout.Quantity, adminEmployeeId);
-
-            // Notify employee (concise)
-            var employee = await _context.Employees.FindAsync(checkout.EmployeeId);
-            var wip = await _context.WipInventories.FindAsync(checkout.WipInventoryId);
-            var product = wip == null ? null : await _context.Products.FindAsync(wip.ProductId);
-            var title = "Check-Out Request Rejected";
-            var message = "Your checkout request has been Rejected.";
-            var notifDto = new DTOs.NotificationCreateDto { EmployeeId = checkout.EmployeeId, Title = title, Message = message };
-            await _notificationService.CreateAsync(notifDto);
-
-            return true;
-        }
-
-        public async Task<IEnumerable<WipInventoryDto>> GetAllAsync()
-        {
-            var list = await _context.WipInventories.Where(w => !w.IsDeleted).ToListAsync();
-            return list.Select(w => new WipInventoryDto { WipInventoryId = w.WipInventoryId, ProductId = w.ProductId, RackId = w.RackId, Quantity = w.Quantity, LastUpdated = w.LastUpdated });
-        }
-
-        public async Task<WipInventoryDto> CreateInventoryAsync(int productId, int rackId, int quantity)
-        {
-            if (quantity < 0) throw new ArgumentException("Quantity cannot be negative", nameof(quantity));
-
-            var product = await _context.Products.FindAsync(productId);
-            if (product == null || product.IsDeleted) throw new InvalidOperationException("Product not found");
-
-            var rack = await _context.Racks.FindAsync(rackId);
-            if (rack == null || rack.IsDeleted) throw new InvalidOperationException("Rack not found");
-
-            var wip = new WipInventory { ProductId = productId, RackId = rackId, Quantity = quantity, LastUpdated = DateTime.UtcNow };
-            _context.WipInventories.Add(wip);
-            var available = rack.Capacity - rack.Occupied;
-            if (quantity > available)
-            {
-                throw new InvalidOperationException($"Rack {rack.RackCode} has only {available} space available.");
-            }
-            rack.Occupied += quantity;
-            _context.Racks.Update(rack);
-
-            await _context.SaveChangesAsync();
-
-            return new WipInventoryDto { WipInventoryId = wip.WipInventoryId, ProductId = wip.ProductId, RackId = wip.RackId, Quantity = wip.Quantity, LastUpdated = wip.LastUpdated };
-        }
-
-        public async Task<WipInventoryDto?> GetByIdAsync(int id)
-        {
-            var w = await _context.WipInventories.FindAsync(id);
-            if (w == null || w.IsDeleted) return null;
-            return new WipInventoryDto { WipInventoryId = w.WipInventoryId, ProductId = w.ProductId, RackId = w.RackId, Quantity = w.Quantity, LastUpdated = w.LastUpdated };
-        }
-
-        public async Task<WipInventoryDto> UpdateInventoryAsync(int id, int quantity)
-        {
-            if (quantity < 0) throw new ArgumentException("Quantity cannot be negative", nameof(quantity));
-            var w = await _context.WipInventories.FindAsync(id);
-            if (w == null || w.IsDeleted) throw new InvalidOperationException("Inventory not found");
-
-            // adjust rack occupancy based on difference
-            var rack = await _context.Racks.FindAsync(w.RackId);
-            if (rack == null || rack.IsDeleted) throw new InvalidOperationException("Rack not found");
-
-            var diff = quantity - w.Quantity;
-            if (rack.Occupied + diff < 0)
-            {
-                throw new InvalidOperationException($"Rack {rack.RackCode} occupied quantity become negetive.");
-            }
-                if (rack.Occupied + diff > rack.Capacity)
-            {
-                throw new InvalidOperationException($"Rack {rack.RackCode} capacity exceeded.");
-            }
-            w.Quantity = quantity;
-            w.LastUpdated = DateTime.UtcNow;
-            _context.WipInventories.Update(w);
-
-            rack.Occupied += diff;
-            if (rack.Occupied < 0) rack.Occupied = 0;
-            _context.Racks.Update(rack);
-
-            await _context.SaveChangesAsync();
-
-            return new WipInventoryDto { WipInventoryId = w.WipInventoryId, ProductId = w.ProductId, RackId = w.RackId, Quantity = w.Quantity, LastUpdated = w.LastUpdated };
-        }
-
-        public async Task<bool> SoftDeleteInventoryAsync(int id)
-        {
-            var w = await _context.WipInventories.FindAsync(id);
-            if (w == null) return false;
-            w.IsDeleted = true;
-            _context.WipInventories.Update(w);
-            await _context.SaveChangesAsync();
-            return true;
+            return string.Empty;
         }
     }
 }
