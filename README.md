@@ -1,51 +1,24 @@
-Do not use a separate Checkout Requests page.
+Update the Notifications page.
 
-Keep the existing Notification page as the approval page.
+The Approve and Reject buttons should NOT call:
 
-For every Checkout Request notification:
-- Save CheckOutId in the Notification table.
-- Return CheckOutId in the Notification API.
-- Approve button should call:
-  POST /api/Inventory/checkout/approve/{checkOutId}
-- Reject button should call:
-  POST /api/Inventory/checkout/reject/{checkOutId}
-
-On Approve:
-- Update Checkout Status to Approved.
-- Reduce Inventory Quantity.
-- Reduce Rack Occupied.
-- Create notification for the employee.
-
-On Reject:
-- Update Checkout Status to Rejected.
-- Inventory should not change.
-- Create notification for the employee.
-
-Do not change existing APIs unnecessarily.
-Keep backward compatibility with the current frontend.
-
-
-Remove the Checkout Requests page.
-
-Use the existing Notifications page for Admin approvals.
-
-For every Checkout Request notification:
-- Show Employee Name.
-- Show Product.
-- Show Quantity.
-- Show Status.
-- Display Approve and Reject buttons.
-
-Approve button:
 POST /api/Inventory/checkout/approve/{checkOutId}
-
-Reject button:
 POST /api/Inventory/checkout/reject/{checkOutId}
 
-After approval or rejection:
-- Refresh Notifications.
-- Refresh Inventory.
-- Refresh Dashboard.
-- Show success message.
+Instead, call:
 
-Do not change the existing notification UI except adding Approve and Reject buttons.
+POST /api/CheckOutRequests/{id}/approve?adminEmployeeId={adminEmployeeId}
+
+POST /api/CheckOutRequests/{id}/reject?adminEmployeeId={adminEmployeeId}
+
+Use the Notification.CheckOutId as the {id} value.
+
+If the API returns HTTP 200 or HTTP 204, treat it as success.
+
+After success:
+- Show a success toast.
+- Refresh notifications.
+- Refresh inventory.
+- Refresh dashboard.
+
+Do not call the Inventory approve/reject endpoints.
