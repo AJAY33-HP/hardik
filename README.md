@@ -1,176 +1,106 @@
-I have a WIP (Work In Progress) Management System built with ASP.NET Core 8 Web API, Entity Framework Core (Code First), SQL Server, Repository Pattern, Service Layer, Swagger, and JWT Authentication.
+I have a React + Bootstrap frontend connected to an ASP.NET Core Web API.
 
-Please update my backend according to the following requirements.
-
-==========================
-1. Checkout Approval Workflow
-==========================
-
-Current Workflow:
-
-Employee
-↓
-Checkout Request
-↓
-Status = Pending
-↓
-Notification sent to Admin
-↓
-Admin Approves / Rejects
-↓
-If Approved:
-    Inventory Quantity decreases
-    Rack Occupied decreases
-    Employee notified
-If Rejected:
-    Inventory unchanged
-    Employee notified
-
-Inventory must NOT decrease when employee submits checkout.
+Please update the frontend according to the following requirements.
 
 ==========================
-2. Checkout Endpoint
+1. Checkout Page
 ==========================
 
-Create a CheckOutDto:
+Design a professional manufacturing checkout page.
 
-public class CheckOutDto
+Flow:
+
+Inventory Dropdown
+
+↓
+
+Inventory Details Card
+
+↓
+
+Employee ID (Readonly)
+
+↓
+
+Checkout Quantity
+
+↓
+
+Destination
+
+↓
+
+Remaining Stock
+
+↓
+
+Submit
+
+Inventory Card must display:
+
+Product
+
+Product Code
+
+Rack
+
+Warehouse
+
+Capacity
+
+Occupied
+
+Available
+
+Status
+
+Progress Bar
+
+Employee ID should come from:
+
+localStorage.getItem("employeeId")
+
+Never ask user to type Employee ID.
+
+==========================
+2. Validation
+==========================
+
+Quantity > 0
+
+Quantity <= Available Stock
+
+Disable button if invalid.
+
+Show Remaining Stock live.
+
+==========================
+3. Checkout API
+==========================
+
+Send JSON:
+
 {
-    public int WipInventoryId { get; set; }
-    public int Quantity { get; set; }
-    public int EmployeeId { get; set; }
+  "wipInventoryId":1,
+  "quantity":10,
+  "employeeId":3
 }
 
-Controller must use:
+Content-Type:
 
-[HttpPost("checkout")]
-public async Task<IActionResult> CheckOut([FromBody] CheckOutDto dto)
+application/json
 
-Frontend sends JSON.
+Success Message:
 
-==========================
-3. Checkout Service
-==========================
+Checkout Request Submitted Successfully.
 
-Validate:
-
-• Quantity > 0
-• Inventory exists
-• Quantity <= Available Stock
-
-Create Checkout record:
-
-Status = Pending
-
-Do NOT reduce inventory.
-
-Create Audit History.
-
-Save Checkout.
-
-Create Notification.
-
-Notification must contain:
-
-Title
-
-Message
-
-EmployeeId
-
-CheckOutId
-
-RecipientRole = Admin
-
-RecipientEmployeeId = null
-
-Return success.
+Waiting for Admin Approval.
 
 ==========================
-4. Notification
+4. Inventory API
 ==========================
 
-Notification table must store:
-
-NotificationId
-
-EmployeeId
-
-RecipientRole
-
-RecipientEmployeeId
-
-CheckOutId
-
-Title
-
-Message
-
-Timestamp
-
-IsRead
-
-Status
-
-IsDeleted
-
-NotificationCreateDto must support:
-
-CheckOutId
-
-Notification creation must include:
-
-CheckOutId = checkout.CheckOutId
-
-==========================
-5. Admin Approval
-==========================
-
-Approve API:
-
-POST
-
-/api/Inventory/checkout/approve/{checkOutId}
-
-Workflow:
-
-Find Checkout
-
-If Pending:
-
-Reduce Inventory
-
-Reduce Rack Occupied
-
-Status = Approved
-
-Audit
-
-Create Employee Notification
-
-Commit Transaction
-
-Reject:
-
-Status = Rejected
-
-Inventory unchanged
-
-Create Employee Notification
-
-==========================
-6. Inventory GetAll
-==========================
-
-Use:
-
-.Include(Product)
-
-.Include(Rack)
-
-.ThenInclude(Warehouse)
-
-Return DTO containing:
+Read:
 
 ProductName
 
@@ -190,51 +120,53 @@ Status
 
 Quantity
 
-==========================
-7. WipInventoryDto
-==========================
+Bind correctly.
 
-Expand DTO:
-
-ProductName
-
-ProductCode
-
-RackCode
-
-WarehouseName
-
-Capacity
-
-Occupied
-
-Available
-
-Status
-
-Quantity
+No blank fields.
 
 ==========================
-8. Notification API
+5. Admin
 ==========================
 
-Admin should retrieve notifications using:
+Do NOT approve from Notification page.
 
-RecipientRole == "Admin"
+Create a new page:
 
-Employee should retrieve notifications using:
+Checkout Requests
 
-RecipientEmployeeId
+Menu:
 
-Notifications should include:
+Dashboard
 
-NotificationId
+Inventory
 
-CheckOutId
+CheckIn
 
-Employee Name
+CheckOut
 
-Product Name
+Checkout Requests
+
+Notifications
+
+Reports
+
+Prediction
+
+==========================
+6. Checkout Requests Page
+==========================
+
+Table:
+
+Request ID
+
+Employee
+
+Product
+
+Rack
+
+Warehouse
 
 Quantity
 
@@ -242,17 +174,93 @@ Status
 
 Date
 
+Actions
+
+Approve
+
+Reject
+
+Approve calls:
+
+POST
+
+/api/Inventory/checkout/approve/{checkOutId}
+
+Reject calls:
+
+POST
+
+/api/Inventory/checkout/reject/{checkOutId}
+
+After approval:
+
+Refresh:
+
+Inventory
+
+Dashboard
+
+Checkout Requests
+
+Notifications
+
 ==========================
-9. Error Handling
+7. Notifications
 ==========================
 
-No API should return HTTP 500 for notification failures.
+Notification page only displays notifications.
 
-Wrap notification creation in try/catch.
+No Approve button.
 
-Log the error.
+Cards should show:
 
-Return checkout success even if notification creation fails.
+Title
+
+Employee
+
+Product
+
+Quantity
+
+Status
+
+Date
+
+Unread Badge
+
+==========================
+8. Dashboard
+==========================
+
+Refresh automatically after:
+
+CheckIn
+
+Checkout Approval
+
+Checkout Rejection
+
+Inventory changes
+
+==========================
+9. UI
+==========================
+
+Use Bootstrap 5.
+
+Responsive.
+
+Professional warehouse dashboard.
+
+Modern cards.
+
+Icons.
+
+Loading spinner.
+
+Toast notifications.
+
+Confirmation dialogs.
 
 ==========================
 10. Deliverables
@@ -260,22 +268,22 @@ Return checkout success even if notification creation fails.
 
 Update:
 
-InventoryController
+Checkout.jsx
 
-InventoryService
+Inventory.jsx
 
-NotificationService
+Dashboard.jsx
 
-NotificationController
+Notifications.jsx
 
-WipInventoryDto
+Create:
 
-CheckOutDto
+CheckoutRequests.jsx
 
-Notification DTOs
+Update React Router
 
-All Entity Framework queries
+Update Sidebar
 
-Swagger endpoints
+Update API services
 
-Ensure project builds successfully.
+Ensure all pages work with the ASP.NET Core backend.
