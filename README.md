@@ -1,138 +1,88 @@
-Fix the Notification GET API only.
+I have an ASP.NET Core 8 Web API.
 
-Do not change the frontend.
+DO NOT modify any frontend code.
 
-Do not change the Notification table schema.
+DO NOT create new APIs.
 
-The Notification table should remain lightweight and continue storing only notification-related fields such as NotificationId, Title, Message, CheckOutId, RecipientRole, Status and Timestamp.
+DO NOT redesign anything.
 
-When GET /api/Notification is called:
+ONLY fix the Employee Access backend.
 
-1. Load notifications.
+Current problems:
 
-2. If CheckOutId is not null:
-   - Join with CheckOuts.
-   - Join CheckOuts with Employees.
-   - Join CheckOuts with WipInventory.
-   - Join WipInventory with Products.
-   - Join Rack and Warehouse.
+1. When the frontend opens "Edit Access", the backend must return the employee's current saved Access.
+Currently the popup opens with all checkboxes empty.
 
-3. Return a NotificationResponseDto containing:
+2. When Admin saves Access, the database must update the Employee.Access column correctly.
 
-- NotificationId
-- NotificationType
-- Title
-- Message
-- CheckOutId
-- EmployeeId
-- EmployeeName
-- ProductId
-- ProductCode
-- ProductName
-- Quantity
-- WarehouseName
-- RackCode
-- Status
-- RecipientRole
-- Timestamp
-- IsRead
+3. After the employee logs in again, Login API must always return the latest Access from SQL Server.
 
-4. If a notification is not related to a checkout (CheckOutId is null), return the available notification fields and use null only for the checkout-related properties.
+4. JWT token must contain the latest Access claim.
 
-5. Update AutoMapper or manual mapping so these fields are populated correctly.
+5. LoginResponse must contain the latest Access.
 
-6. Ensure GET /api/Notification never returns empty EmployeeName, ProductName or Quantity for checkout notifications when the related data exists in the database.
+6. Remove any cached or hardcoded Access values.
 
-7. Do not modify Approve/Reject logic, Checkout logic or database schema. Only improve the GET Notification API response by loading related data through Entity Framework Include/ThenInclude or LINQ joins.
+7. Do NOT change any existing API routes.
 
-Update only the React frontend Notification page.
+8. Do NOT change database schema.
 
-Do not modify any backend code or API endpoints.
+9. Do NOT change authentication flow.
 
-The backend now returns the following fields:
+10. Only modify the files required for Employee Access.
 
-- notificationId
-- notificationType
-- title
-- message
-- checkOutId
-- employeeId
-- employeeName
-- productId
-- productCode
-- productName
-- quantity
-- warehouseName
-- rackCode
-- status
-- recipientRole
-- timestamp
-- isRead
+After finishing provide:
+- Modified files
+- Why each file was modified
+- How to test
+I have a React frontend.
 
-Requirements:
+DO NOT modify backend code.
 
-1. Display the notification list in a modern responsive table.
+DO NOT redesign UI.
 
-Columns:
-- Type
-- Employee
-- Product
-- Quantity
-- Warehouse
-- Rack
-- Status
-- Date & Time
-- Action
+DO NOT modify Login page.
 
-2. Map the backend response correctly:
-- Employee → employeeName
-- Product → productName
-- Quantity → quantity
-- Warehouse → warehouseName
-- Rack → rackCode
-- Status → status
-- Date → timestamp
+DO NOT modify Unauthorized page.
 
-3. Do not show "N/A" if the backend sends a valid value.
+DO NOT modify routing.
 
-4. Only show a "View" button when:
-- notificationType is "Checkout Request"
-- status is "Pending"
+DO NOT modify Sidebar behaviour.
 
-5. Clicking "View" opens a right-side drawer (or modal) showing:
+ONLY fix Employee Edit Access.
 
-- Employee Name
-- Employee ID
-- Product Name
-- Product Code
-- Warehouse
-- Rack
-- Requested Quantity
-- Status
-- Date & Time
+Current problems:
 
-6. Inside the drawer show:
-- Green Approve button
-- Red Reject button
+1. When Admin clicks Edit Access,
+the popup must automatically load the employee's existing permissions.
 
-7. After Approve or Reject:
-- Show success toast.
-- Close the drawer.
-- Remove the processed request from the Pending list.
-- Refresh the notification list automatically.
+Currently all checkboxes are empty.
 
-8. Show colored badges:
-- Pending → Orange
-- Approved → Green
-- Rejected → Red
-- CheckIn → Blue
-- Unread → Gray
+This is wrong.
 
-9. Add:
-- Search
-- Pagination
-- Loading spinner
-- "No notifications found" message when empty.
+2. If an employee already has Dashboard, Inventory and Reports permission,
 
-10. Keep the existing API URLs unchanged.
-Only update the UI and data binding.
+those checkboxes must already be checked.
+
+3. After Save Permissions succeeds,
+
+do not change the current Admin sidebar.
+
+do not refresh the Admin permissions.
+
+Only update the selected employee.
+
+4. Do not hardcode permissions.
+
+Load permissions from backend response.
+
+5. Save button behaviour should remain unchanged.
+
+6. UI design should remain unchanged.
+
+Only modify files related to Edit Access popup.
+
+After finishing provide:
+- Modified files
+- Why each file was modified
+- Testing steps.
