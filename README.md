@@ -1,88 +1,99 @@
-I have an ASP.NET Core 8 Web API.
+Analyze the existing ASP.NET Core Web API project and fix ONLY the Employee Access Permission functionality.
 
-DO NOT modify any frontend code.
+IMPORTANT RULES:
+- DO NOT create any new .md files.
+- DO NOT create documentation files.
+- DO NOT create README files.
+- DO NOT change unrelated modules.
+- DO NOT modify frontend code.
+- Fix only the backend.
 
-DO NOT create new APIs.
+Current Issue:
 
-DO NOT redesign anything.
+1. Employee Edit is working.
 
-ONLY fix the Employee Access backend.
+2. Edit Access popup opens correctly.
 
-Current problems:
+3. Saving access returns:
+"Access updated successfully"
 
-1. When the frontend opens "Edit Access", the backend must return the employee's current saved Access.
-Currently the popup opens with all checkboxes empty.
+4. But the Access column is NOT updated for some employees (example: EmployeeCode = E1).
 
-2. When Admin saves Access, the database must update the Employee.Access column correctly.
+5. SQL shows:
+EmployeeCode = E1
+Access = NULL / Empty
 
-3. After the employee logs in again, Login API must always return the latest Access from SQL Server.
+while other employees (admin, EMP001, EMP002) have JSON stored in Access column.
 
-4. JWT token must contain the latest Access claim.
+6. Login API returns:
 
-5. LoginResponse must contain the latest Access.
+{
+  "role":"Admin",
+  "access":""
+}
 
-6. Remove any cached or hardcoded Access values.
+because Access is empty.
 
-7. Do NOT change any existing API routes.
+Due to this the frontend sidebar becomes empty after login.
 
-8. Do NOT change database schema.
+Tasks:
 
-9. Do NOT change authentication flow.
+1. Find the PUT API responsible for
 
-10. Only modify the files required for Employee Access.
+PUT /api/Employee/{employeeCode}/access
 
-After finishing provide:
-- Modified files
-- Why each file was modified
-- How to test
-I have a React frontend.
+2. Trace the complete flow:
 
-DO NOT modify backend code.
+Controller
+→ Service
+→ Repository (if exists)
+→ Entity Framework
+→ Database Save
 
-DO NOT redesign UI.
+3. Find why SaveChangesAsync() is not updating Access for some employees.
 
-DO NOT modify Login page.
+4. Verify EmployeeCode lookup.
 
-DO NOT modify Unauthorized page.
+5. Ensure employee is fetched correctly.
 
-DO NOT modify routing.
+6. Ensure employee.Access is assigned before SaveChangesAsync().
 
-DO NOT modify Sidebar behaviour.
+7. Ensure SaveChangesAsync() actually affects one row.
 
-ONLY fix Employee Edit Access.
+8. If employee not found, return proper 404 instead of success.
 
-Current problems:
+9. If SaveChangesAsync returns 0 rows, return failure.
 
-1. When Admin clicks Edit Access,
-the popup must automatically load the employee's existing permissions.
+10. Return success only after database update succeeds.
 
-Currently all checkboxes are empty.
+11. Preserve existing JSON format already used by admin/EMP001.
 
-This is wrong.
+12. Do NOT change JWT authentication.
 
-2. If an employee already has Dashboard, Inventory and Reports permission,
+13. Do NOT change login API except making sure it returns the updated Access value from database.
 
-those checkboxes must already be checked.
+14. Do NOT modify any other APIs.
 
-3. After Save Permissions succeeds,
+15. Keep all existing routes unchanged.
 
-do not change the current Admin sidebar.
+16. After fixing, verify this scenario:
 
-do not refresh the Admin permissions.
+Admin Login
+↓
+Edit Access for employee E1
+↓
+Save
+↓
+SQL Access column contains updated JSON
+↓
+Employee Login
+↓
+Login response contains updated Access JSON
+↓
+Frontend automatically shows permitted sidebar menus.
 
-Only update the selected employee.
-
-4. Do not hardcode permissions.
-
-Load permissions from backend response.
-
-5. Save button behaviour should remain unchanged.
-
-6. UI design should remain unchanged.
-
-Only modify files related to Edit Access popup.
-
-After finishing provide:
-- Modified files
-- Why each file was modified
-- Testing steps.
+Output:
+Only modify the required backend files.
+Do not generate markdown files.
+Do not create documentation.
+Do not change unrelated code.
