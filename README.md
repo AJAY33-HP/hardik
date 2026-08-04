@@ -1,99 +1,80 @@
-Analyze the existing ASP.NET Core Web API project and fix ONLY the Employee Access Permission functionality.
+Fix only the frontend permission system.
 
-IMPORTANT RULES:
-- DO NOT create any new .md files.
-- DO NOT create documentation files.
-- DO NOT create README files.
-- DO NOT change unrelated modules.
-- DO NOT modify frontend code.
-- Fix only the backend.
+Current issue:
 
-Current Issue:
+1. Backend login API is already working correctly.
+2. Login API returns:
+   token,
+   role,
+   employeeId,
+   employeeCode,
+   name,
+   access
 
-1. Employee Edit is working.
-
-2. Edit Access popup opens correctly.
-
-3. Saving access returns:
-"Access updated successfully"
-
-4. But the Access column is NOT updated for some employees (example: EmployeeCode = E1).
-
-5. SQL shows:
-EmployeeCode = E1
-Access = NULL / Empty
-
-while other employees (admin, EMP001, EMP002) have JSON stored in Access column.
-
-6. Login API returns:
+3. The access field is stored in the Employees.Access column as a JSON string like:
 
 {
-  "role":"Admin",
-  "access":""
+  "dashboard": true,
+  "inventory": false,
+  "products": true,
+  "employees": false,
+  "wip": true,
+  "checkIn": true,
+  "checkOut": false,
+  "reports": false,
+  "notifications": true,
+  "prediction": false,
+  "racks": false
 }
 
-because Access is empty.
+Backend must NOT be modified.
 
-Due to this the frontend sidebar becomes empty after login.
+Only fix the React frontend.
 
 Tasks:
 
-1. Find the PUT API responsible for
+1. auth.js
+- Detect whether access is a JSON string.
+- Parse it using JSON.parse().
+- Keep backward compatibility if comma-separated access exists.
+- hasPermission() must always use the parsed JSON object.
 
-PUT /api/Employee/{employeeCode}/access
+2. Login.jsx
+- Store response.data.access exactly as received.
+- Do not convert or modify it.
+- Clear old localStorage access before storing new access.
 
-2. Trace the complete flow:
+3. Sidebar.jsx
+- Build sidebar ONLY from parsed access object.
+- Remove role-based menu filtering.
+- Show menu only if access value is true.
+- Do not change sidebar UI or styling.
 
-Controller
-→ Service
-→ Repository (if exists)
-→ Entity Framework
-→ Database Save
+4. App.jsx
+- Replace RequireRole usage with ProtectedRoute.
+- Protect routes using permissions:
+Dashboard -> dashboard
+Inventory -> inventory
+Products -> products
+Employees -> employees
+WIP -> wip
+CheckIn -> checkIn
+CheckOut -> checkOut
+Reports -> reports
+Notifications -> notifications
+Prediction -> prediction
+Racks -> racks
 
-3. Find why SaveChangesAsync() is not updating Access for some employees.
+5. ProtectedRoute
+- Read permissions from auth.js.
+- Redirect to /unauthorized only if permission is false.
+- Do not use role-based authorization.
 
-4. Verify EmployeeCode lookup.
-
-5. Ensure employee is fetched correctly.
-
-6. Ensure employee.Access is assigned before SaveChangesAsync().
-
-7. Ensure SaveChangesAsync() actually affects one row.
-
-8. If employee not found, return proper 404 instead of success.
-
-9. If SaveChangesAsync returns 0 rows, return failure.
-
-10. Return success only after database update succeeds.
-
-11. Preserve existing JSON format already used by admin/EMP001.
-
-12. Do NOT change JWT authentication.
-
-13. Do NOT change login API except making sure it returns the updated Access value from database.
-
-14. Do NOT modify any other APIs.
-
-15. Keep all existing routes unchanged.
-
-16. After fixing, verify this scenario:
-
-Admin Login
-↓
-Edit Access for employee E1
-↓
-Save
-↓
-SQL Access column contains updated JSON
-↓
-Employee Login
-↓
-Login response contains updated Access JSON
-↓
-Frontend automatically shows permitted sidebar menus.
-
-Output:
-Only modify the required backend files.
-Do not generate markdown files.
-Do not create documentation.
-Do not change unrelated code.
+Important:
+- Do NOT modify backend.
+- Do NOT modify API.
+- Do NOT modify database.
+- Do NOT modify UI design.
+- Do NOT create any .md, README, notes, documentation, or extra files.
+- Modify only existing React files.
+- Keep all existing functionality unchanged except fixing permission handling.
